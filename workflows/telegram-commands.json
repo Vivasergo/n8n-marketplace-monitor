@@ -1,0 +1,3814 @@
+{
+  "name": "Telegram — Commands",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "download": false
+        }
+      },
+      "id": "bae76228-ba62-4e9f-90da-c04f70d50295",
+      "name": "Telegram — input",
+      "webhookId": "1a7a2db9-9b0a-4741-9e01-5372f60f82d5",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const u = $input.first().json;\nif (!Number.isSafeInteger(u.update_id) || u.update_id < 0) return [];\nconst m = u.message;\nconst allowedChats = [\"0\"];\nif (!m || m.chat?.type !== \"private\" || !allowedChats.includes(String(m.chat.id)) || m.from?.is_bot !== false) return [];\nreturn [{json:u}];"
+      },
+      "id": "d7f311ee-6af2-470b-909c-1d278a615e1e",
+      "name": "Receive message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_SEARCHES"
+        },
+        "returnAll": true
+      },
+      "id": "779a7cfd-5bb8-4d34-890e-d3fa987dace2",
+      "name": "Read searches",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_NOTIFICATIONS"
+        },
+        "returnAll": true,
+        "matchType": "anyCondition",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "neq",
+              "keyValue": "sent"
+            },
+            {
+              "keyName": "sent_at",
+              "condition": "gte",
+              "keyValue": "={{ new Date(Date.now() - 24 * 3600 * 1000).toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "06eca997-b8de-42c2-813c-64457bc26e45",
+      "name": "Read queue",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        1280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const polishTimeFormatter = new Intl.DateTimeFormat(\"pl-PL\", {\n  timeZone:\"Europe/Warsaw\", year:\"numeric\", month:\"2-digit\", day:\"2-digit\",\n  hour:\"2-digit\", minute:\"2-digit\", second:\"2-digit\", hourCycle:\"h23\"\n});\nconst formatPolishTime = value => {\n  if (!value) return \"not specified\";\n  const date = new Date(value);\n  if (!Number.isFinite(date.getTime())) return \"invalid date\";\n  const p = Object.fromEntries(polishTimeFormatter.formatToParts(date).map(p=>[p.type,p.value]));\n  return p.day+\".\"+p.month+\".\"+p.year+\" \"+p.hour+\":\"+p.minute+\":\"+p.second;\n};\nconst u = $(\"Receive message\").first().json;\nconst m = u.message;\nconst base = {update_id:u.update_id,chat_id:String(m?.chat?.id ?? \"\"),action:\"reply\",reply:\"\"};\nconst result = value => [{json:{...base,...value}}];\nif (typeof m.text !== \"string\") return result({reply:\"Send a text command: /add, /list, /del or /status.\"});\nconst text = m.text.trim();\nconst match = text.match(/^\\/([a-z]+)(?:@([a-z0-9_]+))?(?:\\s+([\\s\\S]*))?$/i);\nconst interval = $(\"C Plan\").first().json.interval_seconds;\nconst MAX_SEARCHES = 15;\nconst help = \"Commands:\\n/add Name link — add a search (no more than \"+MAX_SEARCHES+\")\\n/list — list of searches and their IDs\\n/del ID — delete a search (the ID is in /list, /status and on every card)\\n/status — status of the service, searches and queue\\n/perf — load and performance\\n/history [N] — history for 24 h or N hours (up to 168)\\n/interval N — how often to check, 10 to 360 seconds\\n/on — turn on monitoring and sending; only items that appear after turning on will arrive\\n/on all — switch on and send what was missed during the pause (whatever is still on the first page)\\n/off — stop monitoring and sending\\n\\nExamples:\\n/add Sneakers 44 https://www.marketplace.example/catalog?catalog[]=1231&size_ids[]=788&price_to=300\\n/del tg_476200981\\n\\nCopy the link for /add from the browser address bar once the needed filters are set on the marketplace.\\n\\nHow it works:\\n🔄 Every \"+interval+\" seconds the bot checks all searches at once. The check itself takes a few seconds, so each search is checked roughly every \"+interval+\" seconds. It looks at the first page of the search, where the newest items are.\\n🆕 An item the bot has not yet seen in this search is sent to all members right away: photo, price and an «Open on marketplace» button.\\n🤫 A newly added search first silently remembers the items already there, so only truly new ones arrive.\\n⏳ If the marketplace is temporarily unavailable or rate-limits requests, the bot waits and retries. Errors are shown in /status.\\n✏️ To change filters, delete the search (/del) and add it again (/add).\\n📋 Number of searches cannot exceed \"+MAX_SEARCHES+\". To add a new one beyond the limit, first delete one you no longer need (/del).\";\nif (!match || match[2]) return result({reply:help});\nconst cmd = match[1].toLowerCase();\nconst args = (match[3] ?? \"\").trim();\nconst searches = $(\"Read searches\").all().map(i => i.json).filter(s => s.search_id);\nconst queue = cmd === \"status\" || cmd === \"perf\" ? $(\"Read queue\").all().map(i => i.json).filter(n => n.item_id) : [];\nconst workflows = new Map($input.all().map(i=>i.json).filter(w=>w.id).map(w=>[String(w.id),w]));\nconst producerId = \"WORKFLOW_MONITOR\";\nconst senderId = \"WORKFLOW_SENDER\";\nconst knownService = [producerId,senderId].every(id=>workflows.has(id) && typeof workflows.get(id).active === \"boolean\");\nconst serviceLine = knownService\n  ? \"Monitoring: \" + (workflows.get(producerId).active ? \"enabled\" : \"off\") + \". Sending: \" + (workflows.get(senderId).active ? \"enabled\" : \"disabled\") + \".\"\n  : \"Could not determine monitoring and sender state.\";\nif (cmd === \"on\" || cmd === \"off\") {\n  if (args && !(cmd === \"on\" && args.toLowerCase() === \"all\")) return result({reply:cmd === \"on\" ? \"Usage: /on or /on all\" : \"Usage: /off\"});\n  if (!knownService) return result({reply:serviceLine+\" State unchanged.\"});\n  const enabled = cmd === \"on\";\n  const ids = enabled ? [senderId,producerId] : [producerId,senderId];\n  const targets = ids.filter(id=>workflows.get(id).active !== enabled);\n  if (!targets.length) return result({reply:enabled ? \"Monitoring and sending are already on.\" : \"Monitoring and sending are already off. Bot commands are available.\"});\n  const fresh = enabled && !args && searches.length > 0;\n  const reply = enabled\n    ? (fresh\n      ? \"Monitoring and sending are on, starting fresh. The queue has been cleared; each search will first silently remember the current items, so you will only get new ones that appear after switching on. The first cycle takes up to a couple of minutes.\"\n      : \"Monitoring and sending are on. Items that appeared during the pause and are still visible on the first page of the search will arrive now; the queue is kept.\")\n    : \"Monitoring, sending and nightly cleanup are paused. Searches, history and the queue are kept. An operation already in progress may finish. Bot commands are available.\\nTurn back on:\\n/on — only new items will arrive\\n/on all — send what was missed during the pause (whatever is still on the first page)\";\n  return targets.map(id=>({json:{...base,action:cmd,fresh,target_id:id,target_version:workflows.get(id).versionId,reply},pairedItem:{item:0}}));\n}\nif (cmd === \"interval\") {\n  if (!args) return result({reply:\"Cycle interval: \"+interval+\" s. Change: /interval N, where N is from 10 to 360 seconds.\"});\n  if (!/^\\d{1,3}$/.test(args) || Number(args) < 10 || Number(args) > 360) return result({reply:\"Usage: /interval N, where N is a whole number from 10 to 360 seconds. Current: \"+interval+\" s.\"});\n  const seconds = Number(args);\n  if (seconds === interval) return result({reply:\"Cycle interval is already \"+seconds+\" s.\"});\n  return result({action:\"interval\",interval_seconds:seconds,reply:\"Cycle interval changed: \"+interval+\" → \"+seconds+\" s. Takes effect from the next cycle.\"});\n}\nif (cmd === \"start\" || cmd === \"help\") return result({reply:help});\nif (cmd === \"list\") {\n  if (args) return result({reply:\"Usage: /list\"});\n  return result({reply:searches.length ? searches.map(s => s.search_id + \" — \" + s.name + \" (\" + (s.enabled ? \"enabled\" : \"off\") + \")\").join(\"\\n\").slice(0,3500) : \"No searches yet.\\n\"+help});\n}\nif (cmd === \"history\") {\n  if (args && !/^\\d{1,3}$/.test(args) || args && (Number(args) < 1 || Number(args) > 168))\n    return result({reply:\"Usage: /history — last 24 hours, /history N — last N hours, from 1 to 168.\"});\n  const hours = args ? Number(args) : 24;\n  const H = 3600e3, now = Date.now();\n  const step = hours <= 36 ? H : hours <= 72 ? 3 * H : 6 * H;\n  const end = Math.ceil(now / H) * H;\n  const rows = Math.ceil(hours * H / step), start = end - rows * step;\n  const samples = $(\"HS Measurements\").all().map(i => i.json).filter(s => s.sampled_at)\n    .map(s => ({ ...s, t: Date.parse(s.sampled_at) })).filter(s => s.t >= start && s.t < end).sort((a, b) => a.t - b.t);\n  if (!samples.length) return result({reply:\"📈 ⟦b⟧History⟦/b⟧\\n\\nNo measurements for this period. They are recorded every 5 minutes from the moment it is turned on.\"});\n  const fmt = new Intl.DateTimeFormat(\"pl-PL\", { timeZone:\"Europe/Warsaw\", day:\"2-digit\", month:\"2-digit\", hour:\"2-digit\", minute:\"2-digit\", hourCycle:\"h23\" });\n  const at = t => Object.fromEntries(fmt.formatToParts(new Date(t)).map(p => [p.type, p.value]));\n  const hm = t => { const p = at(t); return p.hour + \":\" + p.minute; };\n  const dm = t => { const p = at(t); return p.day + \".\" + p.month; };\n  const when = t => hours > 24 ? dm(t) + \" \" + hm(t) : hm(t);\n  const val = v => v === null || v === undefined || v === \"\" || !Number.isFinite(Number(v)) ? null : Number(v);\n  const avg = a => { const v = a.filter(x => x !== null); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };\n  const sum = a => a.filter(x => x !== null).reduce((s, x) => s + x, 0);\n  const fx = (v, d = 0) => v === null ? \"—\" : v.toFixed(d).replace(\".\", \",\");\n  const notes = s => { try { return JSON.parse(s.notes || \"{}\") || {}; } catch (e) { return {}; } };\n  const flagged = s => val(s.errors) > 0 || (notes(s).rate || []).length > 0 || (notes(s).failed || []).length > 0 || notes(s).restart || (notes(s).alerts || []).some(a => a.startsWith(\"⚠\"));\n  const bucket = (from, size) => {\n    const b = samples.filter(s => s.t >= from && s.t < from + size);\n    const withCards = b.filter(s => val(s.cards) > 0 && val(s.delay_avg_s) !== null);\n    return { from, has: b.length > 0, cards: b.length ? sum(b.map(s => val(s.cards))) : null,\n      delay: withCards.length ? sum(withCards.map(s => s.delay_avg_s * s.cards)) / sum(withCards.map(s => val(s.cards))) : null,\n      cycle: avg(b.map(s => val(s.cycle_s))), cpu: avg(b.map(s => val(s.cpu_pct))), rss: avg(b.map(s => val(s.rss_mb))), warn: b.some(flagged) };\n  };\n  const lp = (s, n) => (\" \".repeat(n) + s).slice(-n);\n  const pad = (s, n) => (s + \" \".repeat(n)).slice(0, n);\n\n  // Charts: each column is a whole clock interval (1 h for 24 h), at most 24 columns, from the first sample.\n  const first = samples[0].t, last = samples[samples.length - 1].t;\n  const size = [5, 10, 15, 30, 60, 120, 180, 240, 360, 480, 720].map(m => m * 60000)\n    .find(s => Math.floor(last / s) - Math.floor(first / s) < 24) || 720 * 60000;\n  const c0 = Math.floor(first / size) * size, W = Math.floor(last / size) - Math.floor(first / size) + 1;\n  const cols = Array.from({ length: W }, (_, i) => bucket(c0 + i * size, size));\n  // With few columns every column is widened so the chart stays about 24 characters wide.\n  const k = Math.max(1, Math.floor(24 / W)), CW = W * k;\n  const blocks = \" ▁▂▃▄▅▆▇█\";\n  const specs = [[\"Cards\", \"cards\", \"\", 0, true], [\"Cycle\", \"cycle\", \"s\", 1, true], [\"CPU n8n\", \"cpu\", \"%\", 0, true], [\"n8n memory\", \"rss\", \"MB\", 0, false]]\n    .map(([title, key, unit, d, fromZero]) => {\n      const v = cols.map(c => c[key]), ok = v.filter(x => x !== null);\n      const hi = Math.max(...ok), lo = fromZero ? 0 : Math.min(...ok);\n      // A constant series is drawn as one bottom row labelled with its value.\n      return { title: title + (unit ? \", \" + unit : \"\"), v, hi, lo, top: hi === lo ? \"\" : fx(hi, d), bottom: fx(lo, d) };\n    });\n  // One label width for all charts keeps their axes in one vertical line.\n  const wy = Math.max(...specs.map(s => Math.max(s.top.length, s.bottom.length)));\n  // Time ruler: start of the first column (left), start of a middle column (┬), end of the last column (right).\n  const marks = [[0, c0, 0]], mid = Math.round(W / 2);\n  if (mid * k - 2 >= 7 && mid * k + 3 <= CW - 6) marks.push([mid * k, c0 + mid * size, mid * k - 2]);\n  marks.push([-1, c0 + W * size, CW - 5]);\n  let shownDate = \"\";\n  const tick = Array(CW).fill(\"─\"), times = Array(CW).fill(\" \"), dates = Array(CW).fill(\" \");\n  for (const [x, t, at] of marks) {\n    if (x >= 0) tick[x] = \"┬\";\n    [...hm(t)].forEach((c, j) => times[at + j] = c);\n    // The date is shown at the start and wherever it changes.\n    if (dm(t) !== shownDate) [...(shownDate = dm(t))].forEach((c, j) => dates[at + j] = c);\n  }\n  const ruler = [\" \".repeat(wy) + \" └\" + tick.join(\"\"), \" \".repeat(wy + 2) + times.join(\"\"), \" \".repeat(wy + 2) + dates.join(\"\")].join(\"\\n\");\n  const level = (s, x) => x === null ? -1 : s.hi === s.lo ? (s.hi > 0 ? 8 : 0) : Math.round((x - s.lo) / (s.hi - s.lo) * 24);\n  // Zero shows as a thin baseline, a missing sample as \"·\".\n  const cell = (l, r) => { if (l < 0) return r === 0 ? \"·\" : \" \"; const c = Math.max(0, Math.min(8, l - r * 8)); return c === 0 && r === 0 ? \"▁\" : blocks[c]; };\n  const draw = s => {\n    const row = r => s.v.map(x => cell(level(s, x), r).repeat(k)).join(\"\");\n    return [s.title, lp(s.top, wy) + \" ┤\" + row(2), \" \".repeat(wy) + \" │\" + row(1), lp(s.bottom, wy) + \" ┤\" + row(0), ruler].join(\"\\n\");\n  };\n  const colSize = size >= 3600e3 ? size / 3600e3 + \" h\" : size / 60000 + \" min\";\n  const coverage = first > start + step / 2 ? \" · data from \" + when(first) : \"\";\n  const charts = specs.map(draw).join(\"\\n\\n\");\n\n  // Table: one row per step, newest first.\n  const label = t => step === H ? hm(t) : dm(t) + \" \" + at(t).hour + \"h\";\n  const lw = step === H ? 5 : 9;\n  const tableRows = Array.from({ length: rows }, (_, i) => bucket(end - (rows - i) * step, step)).filter(b => b.has).reverse().map(b =>\n    pad(label(b.from), lw) + lp(b.cards === null ? \"—\" : String(b.cards), 5) + lp(b.delay === null ? \"—\" : fx(b.delay, 1), 7)\n      + lp(fx(b.cycle, 1), 6) + lp(b.cpu === null ? \"—\" : fx(b.cpu) + \"%\", 5) + lp(fx(b.rss), 6) + (b.warn ? \" ⚠\" : \"\"));\n  const head = pad(step === H ? \"Hour\" : \"Period\", lw) + lp(\"Cards\", 5) + lp(\"Delay\", 7) + lp(\"Cycle\", 6) + lp(\"CPU\", 5) + lp(\"Mem\", 6);\n\n  // Summary.\n  const peakOf = (key, d, unit) => { const s = samples.filter(x => val(x[key]) !== null); if (!s.length) return \"no data\";\n    const top = s.reduce((a, b) => val(b[key]) > val(a[key]) ? b : a);\n    return \"avg \" + fx(avg(s.map(x => val(x[key]))), d) + unit + \" · max \" + fx(val(top[key]), d) + unit + \" at \" + when(top.t); };\n  const delayed = samples.filter(x => val(x.cards) > 0 && val(x.delay_avg_s) !== null);\n  const delayTop = delayed.length ? delayed.reduce((a, b) => val(b.delay_max_s) > val(a.delay_max_s) ? b : a) : null;\n  const stale = samples.filter(s => val(s.stale_s) !== null);\n  const staleTop = stale.length ? stale.reduce((a, b) => val(b.stale_s) > val(a.stale_s) ? b : a) : null;\n  const errorsTotal = sum(samples.map(s => val(s.errors)));\n  const summary = [\n    \"📦 Cards: ⟦b⟧\" + sum(samples.map(s => val(s.cards))) + \"⟦/b⟧ · 🔁 resends: \" + sum(samples.map(s => val(s.retries))) + \" · \" + (errorsTotal ? \"❌\" : \"✅\") + \" errors: \" + errorsTotal,\n    \"⏱ Until sending: \" + (delayTop ? \"avg \" + fx(sum(delayed.map(x => x.delay_avg_s * x.cards)) / sum(delayed.map(x => val(x.cards))), 1) + \" s · max \" + fx(val(delayTop.delay_max_s), 1) + \" s at \" + when(delayTop.t) : \"no cards\"),\n    \"🔄 Cycle: \" + peakOf(\"cycle_s\", 1, \" s\"),\n    \"🖥 CPU n8n: \" + peakOf(\"cpu_pct\", 0, \"%\"),\n    \"⚙️ n8n executions: \" + peakOf(\"exec_rate\", 1, \"/s\"),\n    \"🕰 Stalest search: \" + (staleTop ? fx(val(staleTop.stale_s)) + \" s at \" + when(staleTop.t) : \"no data\"),\n  ];\n\n  // Events with time; consecutive 429 samples are merged into one interval.\n  const events = [];\n  let rate = null;\n  // Search IDs become tap-to-copy so the search can be removed with /del right away.\n  const ids = searches.map(s => s.search_id).filter(id => /^[A-Za-z0-9_-]+$/.test(id));\n  const copyIds = s => ids.length ? s.replace(new RegExp(\"(?<![A-Za-z0-9_-])(\" + ids.join(\"|\") + \")(?![A-Za-z0-9_-])\", \"g\"), \"⟦code⟧$1⟦/code⟧\") : s;\n  // Older samples store only search names for 429; the ID is looked up among current searches.\n  const withId = name => { const found = searches.filter(s => s.name === name).map(s => s.search_id); return found.length ? name + \" (\" + found.join(\", \") + \")\" : name; };\n  const add = (t, icon, text) => events.push({ t, text: icon + \" ⟦b⟧\" + text.split(\"\\u0000\")[0] + \"⟦/b⟧ \" + copyIds(text.split(\"\\u0000\")[1] || \"\") });\n  const flush = () => { if (rate) add(rate.from, \"🚫\", (rate.to > rate.from ? when(rate.from) + \"–\" + hm(rate.to) : when(rate.from)) + \"\\u0000Marketplace 429: \" + [...rate.names].map(withId).join(\", \")); rate = null; };\n  for (const s of samples) {\n    const n = notes(s);\n    if ((n.rate || []).length) { if (!rate) rate = { from: s.t, to: s.t, names: new Set() }; rate.to = s.t; n.rate.forEach(x => rate.names.add(x)); } else flush();\n    if (n.restart) add(s.t, \"🔄\", when(s.t) + \"\\u0000n8n restart\");\n    for (const [wf, c] of Object.entries(n.errors || {})) add(s.t, \"❌\", when(s.t) + \"\\u0000run errors: \" + wf + \" — \" + c);\n    for (const f of n.failed || []) add(s.t, \"📭\", when(s.t) + \"\\u0000not delivered: \" + String(f).slice(0, 60));\n    for (const a of (n.alerts || []).map(String)) if (!a.includes(\"429\"))\n      a.startsWith(\"✅\") ? add(s.t, \"✅\", when(s.t) + \"\\u0000recovered: \" + a.replace(/^✅ Recovered: /, \"\").slice(0, 110))\n        : add(s.t, \"⚠️\", when(s.t) + \"\\u0000\" + a.replace(/^⚠️ /, \"\").slice(0, 110));\n  }\n  flush();\n  events.sort((a, b) => b.t - a.t);\n\n  const build = limit => {\n    const shown = events.slice(0, limit), more = events.length - shown.length;\n    return \"📈 ⟦b⟧History for \" + hours + \" h⟦/b⟧\\n⟦i⟧\" + dm(start) + \" \" + hm(start) + \" → \" + dm(end) + \" \" + hm(end) + coverage + \"⟦/i⟧\\n\\n\"\n      + \"📊 ⟦b⟧Charts⟦/b⟧\\n⟦i⟧Single bar — \" + colSize + \". Below the axis — time and date: start on the left, ┬ — middle, right end.⟦/i⟧\\n⟦pre⟧\" + charts + \"⟦/pre⟧\\n\"\n      + \"📋 ⟦b⟧\" + (step === H ? \"Hourly\" : \"By \" + step / H + \" h\") + \"⟦/b⟧ ⟦i⟧(⚠ — there were 429s, errors or failures)⟦/i⟧\\n⟦pre⟧\" + head + \"\\n\" + tableRows.join(\"\\n\") + \"⟦/pre⟧\\n\"\n      + \"🧾 ⟦b⟧Total⟦/b⟧\\n\" + summary.join(\"\\n\") + \"\\n⟦i⟧Measurements: \" + samples.length + \", every 5 min⟦/i⟧\\n\\n\"\n      + \"⚡ ⟦b⟧Events⟦/b⟧\\n\" + (shown.length ? shown.map(e => e.text).join(\"\\n\") + (more ? \"\\n⟦i⟧… plus \" + more + \" earlier⟦/i⟧\" : \"\") : \"No events ✅\");\n  };\n  let limit = 30, reply = build(limit);\n  while (reply.length > 3900 && limit > 0) reply = build(limit -= 5);\n  return result({reply:reply.slice(0, 3900)});\n}\nif (cmd === \"perf\") {\n  if (args) return result({reply:\"Usage: /perf\"});\n  const now = Date.now();\n  const sec = ms => (ms / 1000).toFixed(1).replace(\".\", \",\") + \" s\";\n  const metric = (text, name) => { const m = String(text || \"\").match(new RegExp(\"^\" + name + \"(?:\\\\{[^}]*\\\\})? (\\\\S+)$\", \"m\")); return m ? Number(m[1]) : NaN; };\n  const sample = node => { const j = $(node).first().json; return { text: j.data ?? j.body ?? \"\", at: Date.parse(j.read_at || \"\") }; };\n  const lines = [];\n\n  const monitor = $(\"PF Monitor\").all().map(i => i.json).find(r => r.name === \"monitor\") || {};\n  const cycle = Date.parse(monitor.last_completed_at) - Date.parse(monitor.last_started_at);\n  lines.push(Number.isFinite(cycle) && cycle >= 0\n    ? \"Last cycle: \" + sec(cycle) + \" at interval \" + interval + \" s (margin \" + Math.max(0, Math.round(100 - cycle / 10 / interval)) + \"%)\"\n    : \"Last cycle: no data\");\n\n  const day = queue.filter(n => n.status === \"sent\" && Date.parse(n.sent_at) >= now - 864e5);\n  const delays = day.map(n => Date.parse(n.sent_at) - Date.parse(n.createdAt)).filter(d => Number.isFinite(d) && d >= 0);\n  lines.push(delays.length\n    ? \"From find to sending over 24 hours: average \" + sec(delays.reduce((a, b) => a + b, 0) / delays.length) + \", maximum \" + sec(Math.max(...delays)) + \" (\" + delays.length + \" cards)\"\n    : \"From discovery to sending over 24 h: no cards\");\n  const pending = queue.filter(n => n.status === \"pending\");\n  lines.push(\"Queue: \" + pending.length + (pending.length ? \", oldest waiting \" + sec(now - Math.min(...pending.map(n => Date.parse(n.createdAt)))) : \"\"));\n\n  const ex = $(\"PF Errors\").first().json;\n  const errors = Array.isArray(ex.body?.data) ? ex.body.data.filter(e => Date.parse(e.startedAt) >= now - 864e5).length : null;\n  lines.push(\"Failed executions in 24 h: \" + (errors === null ? \"no data\" : errors >= 250 ? \"250 and more\" : errors));\n  lines.push(\"Searches with errors: \" + searches.filter(s => s.enabled && s.last_error).length + \" of \" + searches.filter(s => s.enabled).length);\n\n  const a = sample(\"PF Metrics 1\"), b = sample(\"PF Metrics 2\");\n  const cpu = (metric(b.text, \"n8n_process_cpu_seconds_total\") - metric(a.text, \"n8n_process_cpu_seconds_total\")) / ((b.at - a.at) / 1000);\n  const rss = metric(b.text, \"n8n_process_resident_memory_bytes\");\n  const lag = metric(b.text, \"n8n_nodejs_eventloop_lag_p99_seconds\");\n  const started = metric(b.text, \"n8n_process_start_time_seconds\");\n  // Split by status and mode labels; the total is the sum of all lines.\n  const runs = [...String(b.text).matchAll(/^n8n_workflow_execution_duration_seconds_count(?:\\{[^}]*\\})? (\\S+)$/gm)].reduce((s, m) => s + Number(m[1]), 0);\n  if (Number.isFinite(rss)) {\n    lines.push(\"\");\n    lines.push(\"n8n (main process):\");\n    if (Number.isFinite(cpu)) lines.push(\"CPU: \" + Math.round(cpu * 100) + \"% of one core (over 2 s)\");\n    lines.push(\"Memory: \" + Math.round(rss / 1048576) + \" MB\");\n    if (Number.isFinite(lag)) lines.push(\"Internal loop delay (p99): \" + Math.round(lag * 1000) + \" ms\");\n    if (Number.isFinite(started)) {\n      const up = now / 1000 - started;\n      lines.push(\"Running without restart: \" + (up >= 86400 ? Math.floor(up / 86400) + \" d \" : \"\") + Math.floor(up % 86400 / 3600) + \" h \" + Math.floor(up % 3600 / 60) + \" min\");\n      if (Number.isFinite(runs) && up > 0) lines.push(\"Executions since start: \" + runs + \" (\" + (runs / up).toFixed(1).replace(\".\", \",\") + \" per second)\");\n    }\n  } else lines.push(\"\", \"n8n metrics unavailable (requires N8N_METRICS=true).\");\n  return result({reply:\"Performance\\n\" + lines.join(\"\\n\")});\n}\nif (cmd === \"status\") {\n  if (args) return result({reply:\"Usage: /status\"});\n  const pending = queue.filter(n => n.status === \"pending\").length;\n  // \"Read queue\" also returns rows sent in the last 24 h; one row = one card of one search.\n  const dayAgo = Date.now() - 24 * 3600 * 1000;\n  const sentDay = queue.filter(n => n.status === \"sent\" && Date.parse(n.sent_at) >= dayAgo);\n  const cards = count => { const d = count % 10, h = count % 100;\n    return count + \" \" + (d === 1 && h !== 11 ? \"card\" : d >= 2 && d <= 4 && (h < 12 || h > 14) ? \"cards\" : \"cards\"); };\n  const lines = searches.map(s => \"ID: \" + s.search_id + \" — \" + s.name + \": \" + (s.last_error ? \"error: \" + String(s.last_error).slice(0,180) : s.initialized ? \"checked \" + formatPolishTime(s.last_success_at) : \"awaiting first check\") + \", in 24 hours: \" + cards(sentDay.filter(n => n.search_id === s.search_id).length));\n  return result({reply:(serviceLine+\"\\nCycle interval: \"+interval+\" s.\\nTime: Polish (Europe/Warsaw).\\nSearches: \"+searches.length+\" of \"+MAX_SEARCHES+\". Enabled: \"+searches.filter(s=>s.enabled).length+\"\\nAwaiting sending: \"+pending+\"\\nSent in 24 hours: \"+cards(sentDay.length)+\"\\n\"+lines.join(\"\\n\")).slice(0,3500)});\n}\nif (cmd === \"del\") {\n  if (!/^[A-Za-z0-9_-]{1,64}$/.test(args)) return result({reply:\"Usage: /del ID (the ID is in /list, /status and on every card)\"});\n  const s=searches.find(s=>s.search_id===args);\n  if (!s) return result({reply:\"Search \"+args+\" not found.\"});\n  return result({action:\"delete\",search_id:s.search_id,reply:\"Search deleted \"+s.search_id+\" — \"+s.name+\". History and related notifications deleted; notifications of other searches are unaffected.\"});\n}\nif (cmd === \"add\") {\n  if (searches.length >= MAX_SEARCHES) return result({reply:\"Limit reached: no more than \"+MAX_SEARCHES+\" searches. Search not added. To add a new one, first delete one you no longer need: /del ID (list — /list).\"});\n  const a=args.match(/^(.+?)\\s+(https:\\/\\/\\S+)$/i);\n  if (!a) return result({reply:help});\n  const name=a[1].trim(), raw=a[2];\n  if (!name || name.length>120) return result({reply:\"Name must be 1 to 120 characters long.\"});\n  if (!/^https:\\/\\/(?:www\\.)?marketplace\\.example\\/catalog(?:\\?[^#\\s]*)?(?:#[^\\s]*)?$/i.test(raw)) return result({reply:\"An HTTPS link to a www.marketplace.example/catalog page is required.\"});\n  let query;\n  try { query=(raw.split(\"#\")[0].split(\"?\")[1] || \"\").split(\"&\").filter(Boolean).filter(p=>{decodeURIComponent(p);return ![\"page\",\"order\"].includes(decodeURIComponent(p.split(\"=\")[0]).toLowerCase());}); }\n  catch { return result({reply:\"The link has invalid encoding. Send the link from the browser address bar.\"}); }\n  const url=\"https://www.marketplace.example/catalog?\"+[...query,\"page=1\",\"order=newest_first\"].join(\"&\");\n  const id=\"tg_\"+u.update_id;\n  const existing=searches.find(s=>s.search_id===id || s.url===url);\n  if(existing) return result({reply:\"This search is already added: \"+existing.search_id+\" — \"+existing.name+\".\"});\n  return result({action:\"add\",search_id:id,name,url,enabled:true,initialized:false,baseline_completed_at:null,applied_url:\"\",next_check_at:new Date().toISOString(),last_success_at:null,last_error:\"\",reply:\"Added \"+id+\" — \"+name+\". The shared monitoring interval is used. The first check runs without notifications.\"});\n}\nreturn result({reply:help});"
+      },
+      "id": "789216b9-6d31-45a1-ac18-5156112b0e57",
+      "name": "Parse command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 6,
+        "output": "={{ [\"add\",\"delete\",\"reply\",\"on\",\"off\",\"interval\"].indexOf($json.action) }}"
+      },
+      "id": "573613f9-3899-473b-aca4-24e62e6232bd",
+      "name": "Choose action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_SEARCHES"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "applied_url": "={{ $json.applied_url }}",
+            "enabled": "={{ $json.enabled }}",
+            "initialized": "={{ $json.initialized }}",
+            "last_error": "={{ $json.last_error }}",
+            "last_success_at": "={{ $json.last_success_at }}",
+            "name": "={{ $json.name }}",
+            "next_check_at": "={{ $json.next_check_at }}",
+            "search_id": "={{ $json.search_id }}",
+            "url": "={{ $json.url }}",
+            "baseline_completed_at": "={{ $json.baseline_completed_at }}"
+          },
+          "schema": [
+            {
+              "id": "applied_url",
+              "displayName": "applied_url",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "enabled",
+              "displayName": "enabled",
+              "type": "boolean",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "initialized",
+              "displayName": "initialized",
+              "type": "boolean",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "last_success_at",
+              "displayName": "last_success_at",
+              "type": "dateTime",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "next_check_at",
+              "displayName": "next_check_at",
+              "type": "dateTime",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "search_id",
+              "displayName": "search_id",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            },
+            {
+              "id": "baseline_completed_at",
+              "displayName": "baseline_completed_at",
+              "type": "dateTime",
+              "display": true,
+              "required": false,
+              "defaultMatch": false,
+              "removed": false
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7f12844e-e5a8-443a-a6c5-8b7cd1639aa9",
+      "name": "Add search",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2560,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_SEARCHES"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "search_id",
+              "keyValue": "={{ $json.search_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c548b3c0-06e6-4719-aee1-7f2ae30b4e29",
+      "name": "Delete search",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "alwaysOutputData": true,
+      "position": [
+        4160,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $(\"Parse command\").first().json.chat_id }}",
+        "text": "={{ $(\"Parse command\").first().json.reply.replace(/&/g,\"&amp;\").replace(/</g,\"&lt;\").replace(/>/g,\"&gt;\").replace(/⟦(\\/?)(pre|b|i|code)⟧/g,\"<$1$2>\") }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "a6ed1f6f-ff07-4456-9f14-17be336c362a",
+      "name": "Reply in Telegram",
+      "webhookId": "2fab0644-51df-48e4-8df5-ed0566583c59",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "executeOnce": true,
+      "position": [
+        4800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_COMMAND_RECEIPTS"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "update_id",
+              "keyValue": "={{ $('C Plan').first().json.input.update_id }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "1b6cfebe-4590-4154-8230-68ebd9adc113",
+      "name": "Command not processed yet",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_COMMAND_RECEIPTS"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "update_id": "={{ $json.update_id }}",
+            "processed_at": "={{ $json.processed_at }}",
+            "chat_id": "={{ $json.chat_id }}",
+            "request_text": "={{ $json.request_text }}",
+            "response_text": "={{ $json.response_text }}",
+            "response_message_id": "={{ $json.response_message_id }}"
+          },
+          "schema": [
+            {
+              "id": "update_id",
+              "displayName": "update_id",
+              "type": "number",
+              "display": true,
+              "required": false,
+              "defaultMatch": false
+            },
+            {
+              "id": "processed_at",
+              "displayName": "processed_at",
+              "type": "dateTime",
+              "display": true,
+              "required": false,
+              "defaultMatch": false
+            },
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false
+            },
+            {
+              "id": "request_text",
+              "displayName": "request_text",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false
+            },
+            {
+              "id": "response_text",
+              "displayName": "response_text",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false
+            },
+            {
+              "id": "response_message_id",
+              "displayName": "response_message_id",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "defaultMatch": false
+            }
+          ],
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "f9be6e56-8778-46d9-b02c-d6079eba8dcb",
+      "name": "Remember command",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        5328,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "workflow",
+        "operation": "getAll",
+        "returnAll": true,
+        "filters": {}
+      },
+      "id": "2b1e1757-b517-4b7b-a5dc-53bf8608a2af",
+      "name": "Read service state",
+      "type": "n8n-nodes-base.n8n",
+      "typeVersion": 1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        1600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "workflow",
+        "operation": "activate",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.target_id }}"
+        },
+        "additionalFields": {
+          "versionId": "={{ $json.target_version }}"
+        }
+      },
+      "id": "e66a5067-8646-4b42-8b8a-9c5cc0494bac",
+      "name": "Enable production workflows",
+      "type": "n8n-nodes-base.n8n",
+      "typeVersion": 1,
+      "position": [
+        2560,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "workflow",
+        "operation": "deactivate",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.target_id }}"
+        }
+      },
+      "id": "d32f6e84-1057-4b32-93f6-20dd7605d290",
+      "name": "Disable production workflows",
+      "type": "n8n-nodes-base.n8n",
+      "typeVersion": 1,
+      "position": [
+        2560,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rh=(function createPolicy() {\n  const fail=m=>{throw Error('Independent searches: '+m);};\n  const validId=n=>Number.isSafeInteger(n)&&n>0;\n  function rows(items){return items.map(i=>{\n    if(i.error||!i.json&&typeof i!=='object')fail('read error');\n    const r=i.json??i;if(!r||r.error||r._rh_io||r._baseline_io)fail('read not confirmed');return r;\n  }).filter(r=>{if(!Object.keys(r).length)return false;if(!validId(r.id))fail('no system id');return true;});}\n  return {rows,fail,validId};\n})();\nif(rh.rows($input.all()).length)throw Error('History of the deleted search remains');return [{json:$(\"Parse command\").first().json}];"
+      },
+      "id": "6a22644b-814a-4451-8a08-b5b38df05b71",
+      "name": "Search history deleted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3840,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 01 · Receive and parse command\nAccess → repeat protection → data → action choice",
+        "width": 2550,
+        "height": 100,
+        "color": 5
+      },
+      "id": "384b6cfb-14cd-43bd-9086-b797ab437843",
+      "name": "Section: 01 · Receive and parse command",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 02 · Adding and management\nSearch creation; /on and /off",
+        "width": 1400,
+        "height": 100,
+        "color": 4
+      },
+      "id": "1ca7ee6d-12fe-4580-8875-b22118890f50",
+      "name": "Section: 02 · Adding and management",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2480,
+        -576
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 03 · Search deletion\nNotifications: delete own, verify none of own remain → history → setting",
+        "width": 1950,
+        "height": 100,
+        "color": 3
+      },
+      "id": "68bc88e9-3e52-489f-b100-f450a3e7f5d1",
+      "name": "Section: 03 · Search deletion",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2480,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 04 · Reply and command log\nTelegram confirmation → request text and actual response → update receipt_id",
+        "width": 900,
+        "height": 100,
+        "color": 6
+      },
+      "id": "37a421d1-c6b9-4f3c-b03b-efd5e2f1fc60",
+      "name": "Section: 04 · Reply and receipt",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4720,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cc12c1f1-d30e-41f4-8278-eb9ee9ce75ec",
+              "leftValue": "={{ /^\\/(?:status|perf|history)(?:\\s|$)/i.test($(\"Receive message\").first().json.message?.text?.trim() ?? \"\") }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-queue-status-gate",
+      "name": "IS Queue needed for status?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3200,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst c=$(\"Parse command\").first().json;const searches=$(\"Read searches\").all().map(i=>i.json).filter(r=>r.search_id===c.search_id);if(c.action!=='delete'||typeof c.search_id!=='string'||!c.search_id||searches.length!==1)throw Error('Search to delete not confirmed');return [{json:{search_id:c.search_id}}];"
+      },
+      "id": "is-d90e2708ad23c65fc05ea67e",
+      "name": "IS Check deletion owner",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        6000
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "http://127.0.0.1:5678/api/v1/data-tables/TABLE_NOTIFICATIONS/rows/delete",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "={{ JSON.stringify({type:\"and\",filters:[{columnName:\"search_id\",condition:\"eq\",value:$(\"IS Check deletion owner\").first().json.search_id}]}) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "is-ff4fd65b68ad892f4d628811",
+      "name": "IS Delete search notifications",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -176,
+        5648
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst r=$input.first().json;if(r.statusCode!==200||!(r.body===true||r.body?.success===true))throw Error('The local API did not confirm the deletion');return [{json:$(\"IS Check deletion owner\").first().json}];"
+      },
+      "id": "is-98c405e9dd2a3bc66c13ec98",
+      "name": "IS Confirm deletion API",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        5984
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_NOTIFICATIONS"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "search_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.search_id }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1
+      },
+      "id": "is-b376d64bc643c793c65bc60f",
+      "name": "IS Check for no notifications",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        -368,
+        5616
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rh=(function createPolicy() {\n  const fail=m=>{throw Error('Independent searches: '+m);};\n  const validId=n=>Number.isSafeInteger(n)&&n>0;\n  function rows(items){return items.map(i=>{\n    if(i.error||!i.json&&typeof i!=='object')fail('read error');\n    const r=i.json??i;if(!r||r.error||r._rh_io||r._baseline_io)fail('read not confirmed');return r;\n  }).filter(r=>{if(!Object.keys(r).length)return false;if(!validId(r.id))fail('no system id');return true;});}\n  return {rows,fail,validId};\n})();\nif(rh.rows($input.all()).length)throw Error('Notifications of the deleted search remain');return [{json:$(\"Parse command\").first().json}];"
+      },
+      "id": "is-dbce30b9a6fcf501ea8be237",
+      "name": "IS Confirm no notifications",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        5824
+      ]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "http://127.0.0.1:5678/api/v1/data-tables/TABLE_SEEN_ITEMS/rows/delete",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "={{ JSON.stringify({type:\"and\",filters:[{columnName:\"search_id\",condition:\"eq\",value:$(\"IS Check deletion owner\").first().json.search_id}]}) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "is-359e27b707ecd1c97f7bde1c",
+      "name": "IS Delete API history",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        384,
+        5872
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst r=$input.first().json;if(r.statusCode!==200||!(r.body===true||r.body?.success===true))throw Error('The local API did not confirm the deletion');return [{json:$(\"IS Check deletion owner\").first().json}];"
+      },
+      "id": "is-2444838420ece6b978b43860",
+      "name": "IS Confirm API history",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        5664
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_SEEN_ITEMS"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "search_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.search_id }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1
+      },
+      "id": "is-e273daec71685169f063aee1",
+      "name": "IS Verify no history",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        0,
+        5664
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const update=$(\"Receive message\").first().json;\nconst command=$(\"Parse command\").first().json;\nconst rows=$input.all();\nif (!rows.length) throw Error('Telegram did not confirm the command reply');\nreturn rows.map(({json:envelope},index)=>{\n  const sent=envelope.result ?? envelope;\n  const messageId=String(sent.message_id ?? '');\n  if (envelope.ok === false || !/^[1-9][0-9]*$/.test(messageId) ||\n      String(sent.chat?.id ?? '') !== command.chat_id || typeof sent.text !== 'string') {\n    throw Error('Telegram did not confirm the reply text and recipient');\n  }\n  return {json:{update_id:update.update_id,processed_at:new Date().toISOString(),\n    chat_id:command.chat_id,\n    request_text:typeof update.message.text === 'string' ? update.message.text : (update.message.caption ?? ''),\n    response_text:sent.text,response_message_id:messageId},pairedItem:{item:index}};\n});"
+      },
+      "id": "command-receipt-from-telegram",
+      "name": "Prepare command receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5072,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "service"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "4a412c03-85ad-42fb-a647-23a54449b3a5",
+      "name": "C Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -3104,
+        -896
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const c=$input.first().json;if(c.name!=='service'||!Number.isFinite(c.interval_seconds)||c.interval_seconds<=0)throw Error('No common interval');const input=$('C Input').first().json;return [{json:{owner:String($execution.id),owner_workflow:String($workflow.id),interval_seconds:c.interval_seconds,enabled:c.enabled===true,input,needs_monitor:\"commands\"==='commands'&&/^\\/(?:del(?:@[a-z0-9_]+)?(?:\\s|$)|on$)/i.test(input.message?.text?.trim()||'')}}];"
+      },
+      "id": "e824a835-ebd8-4b40-962c-d30eac2aafff",
+      "name": "C Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2768,
+        -896
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();"
+      },
+      "id": "c5ce73e7-4994-458a-aa85-adeab52ea9e7",
+      "name": "C Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2448,
+        -896
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "75294243-6417-4409-a434-b8a65fcf76d0",
+      "name": "C Skip",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -2112,
+        -896
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "commands"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "4c9b9df8-8b12-4719-8a73-6686524d0133",
+      "name": "C Read",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -1776,
+        -896
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows=$input.all().map(i=>i.json);if(rows.length!==1||rows[0].name!==\"commands\"||typeof rows[0].owner!=='string')throw Error('Owner row corrupted');const r=rows[0];if(r.owner!=='free'&&(!/^[1-9]\\d*$/.test(r.owner)||!r.owner_workflow))throw Error('Owner corrupted');return [{json:r}];"
+      },
+      "id": "f0c8cc2d-bd12-4109-9b4d-81c265da5b55",
+      "name": "C State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3104,
+        -672
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.owner === \"free\" }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "23534331-a850-45c7-8d8c-d5c408d4429e",
+      "name": "C Free?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2768,
+        -672
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"http://127.0.0.1:5678/api/v1/executions/\"+$json.owner }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 3000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "bbcf6f80-9bfa-4e75-9f82-b2194554fd34",
+      "name": "C Owner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2448,
+        -672
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json,o=$('C Read').all(0,-1)[0].json,b=r.body||{},same=r.statusCode===200&&String(b.id)===o.owner&&String(b.workflowId)===o.owner_workflow;return [{json:{observed_owner:o.owner,known_live:same&&['running','new','waiting'].includes(b.status),recover:same&&['success','error','crashed','canceled'].includes(b.status),missing:r.statusCode===404}}];"
+      },
+      "id": "4efc1d23-ec6c-4233-8884-35df536a6f4e",
+      "name": "C Evaluate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2112,
+        -672
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.missing === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9092fd78-35c9-4660-b438-a4a7242a1ba2",
+      "name": "C Missing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1776,
+        -672
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:5678/api/v1/executions?status=running&limit=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 3000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "217b4f27-8874-4108-b7b5-9e4aa6d7ff07",
+      "name": "C Active",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3104,
+        -448
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json,o=$('C Read').all(0,-1)[0].json,b=r.body||{},valid=r.statusCode===200&&Array.isArray(b.data)&&!b.nextCursor,live=valid&&b.data.some(e=>String(e.id)===o.owner);return [{json:{observed_owner:o.owner,known_live:live,recover:valid&&!live}}];"
+      },
+      "id": "77d75a65-fa83-417e-a4ad-366afe856602",
+      "name": "C Confirm absence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2768,
+        -448
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.recover === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8f2b4217-6bc5-4644-908f-85f4b2f844c1",
+      "name": "C Can recover?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2448,
+        -448
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "commands"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "={{ $json.observed_owner }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "owner": "free",
+            "owner_workflow": "",
+            "finished_at": "={{ new Date().toISOString() }}"
+          },
+          "schema": [
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "owner_workflow",
+              "displayName": "owner_workflow",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "finished_at",
+              "displayName": "finished_at",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "33627fae-48eb-49bc-a3fd-e26f2be4c0d1",
+      "name": "C Restore",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -2112,
+        -448
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "commands"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "free"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "owner": "={{ $('C Plan').first().json.owner }}",
+            "owner_workflow": "={{ $('C Plan').first().json.owner_workflow }}",
+            "started_at": "={{ new Date().toISOString() }}"
+          },
+          "schema": [
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "owner_workflow",
+              "displayName": "owner_workflow",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "913e3a79-d11a-4179-93e0-93e1bff0d660",
+      "name": "C Acquire",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -1776,
+        -448
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{owned:$input.all().some(i=>i.json.owner===$('C Plan').first().json.owner&&i.json.name===\"commands\")}}];"
+      },
+      "id": "20b78d9d-6a58-4fd7-ba86-f142014b57b1",
+      "name": "C My owner",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3104,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.owned === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7b5d5bc6-2da6-4bc2-b4fa-fb8d0b9ab9af",
+      "name": "C Received?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2768,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "if($input.first().json.known_live===false)throw Error('Could not safely check the owner');await new Promise(r=>setTimeout(r,100));return [{json:{retry:true}}];"
+      },
+      "id": "fdfd3f8d-dad5-448d-974a-e65b9f3ddf36",
+      "name": "C Wait",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2448,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "monitor"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "3916ef03-0508-49ff-865e-cc5f759baada",
+      "name": "CM Read",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -2112,
+        -208
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows=$input.all().map(i=>i.json);if(rows.length!==1||rows[0].name!==\"monitor\"||typeof rows[0].owner!=='string')throw Error('Owner row corrupted');const r=rows[0];if(r.owner!=='free'&&(!/^[1-9]\\d*$/.test(r.owner)||!r.owner_workflow))throw Error('Owner corrupted');return [{json:r}];"
+      },
+      "id": "660a889d-afa4-4c69-8541-9b638933e922",
+      "name": "CM State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.owner === \"free\" }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2f423f80-aac6-47d3-8eaa-9255b37ed3c9",
+      "name": "CM Free?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3104,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ \"http://127.0.0.1:5678/api/v1/executions/\"+$json.owner }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 3000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ccfae12a-a53c-4981-8239-ab5516dbb3df",
+      "name": "CM Owner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2768,
+        32
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json,o=$('CM Read').all(0,-1)[0].json,b=r.body||{},same=r.statusCode===200&&String(b.id)===o.owner&&String(b.workflowId)===o.owner_workflow;return [{json:{observed_owner:o.owner,known_live:same&&['running','new','waiting'].includes(b.status),recover:same&&['success','error','crashed','canceled'].includes(b.status),missing:r.statusCode===404}}];"
+      },
+      "id": "9abc3509-07cd-4789-83c8-db28248843c2",
+      "name": "CM Evaluate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2448,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.missing === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "955f8626-64e8-4a18-a43a-cb3935d5eda2",
+      "name": "CM Missing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2112,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:5678/api/v1/executions?status=running&limit=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 3000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "99497611-23b0-4ab8-9aa3-89ec9fe176d8",
+      "name": "CM Active",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1776,
+        32
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$input.first().json,o=$('CM Read').all(0,-1)[0].json,b=r.body||{},valid=r.statusCode===200&&Array.isArray(b.data)&&!b.nextCursor,live=valid&&b.data.some(e=>String(e.id)===o.owner);return [{json:{observed_owner:o.owner,known_live:live,recover:valid&&!live}}];"
+      },
+      "id": "c2fc0a55-b377-4924-a0a5-713190115068",
+      "name": "CM Confirm absence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3104,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.recover === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "aaa8cea3-0668-46c9-8882-35c596d7e77a",
+      "name": "CM Can recover?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2768,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "monitor"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "={{ $json.observed_owner }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "owner": "free",
+            "owner_workflow": "",
+            "finished_at": "={{ new Date().toISOString() }}"
+          },
+          "schema": [
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "owner_workflow",
+              "displayName": "owner_workflow",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "finished_at",
+              "displayName": "finished_at",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9156f0a8-b7eb-4b5d-84b0-932032be8d92",
+      "name": "CM Restore",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -2448,
+        256
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "monitor"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "free"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "owner": "={{ $('C Plan').first().json.owner }}",
+            "owner_workflow": "={{ $('C Plan').first().json.owner_workflow }}",
+            "started_at": "={{ new Date().toISOString() }}"
+          },
+          "schema": [
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "owner_workflow",
+              "displayName": "owner_workflow",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "started_at",
+              "displayName": "started_at",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "ce9dc5c1-59d1-443e-b35a-0903249868a9",
+      "name": "CM Acquire",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -2112,
+        256
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:{owned:$input.all().some(i=>i.json.owner===$('C Plan').first().json.owner&&i.json.name===\"monitor\")}}];"
+      },
+      "id": "e2b7a6ef-3b5b-4ef6-bdc9-30dd14ea409c",
+      "name": "CM My owner",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.owned === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b82f6fc3-1720-4149-9d90-2ad3934d14aa",
+      "name": "CM Received?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3104,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "if($input.first().json.known_live===false)throw Error('Could not safely check the owner');await new Promise(r=>setTimeout(r,100));return [{json:{retry:true}}];"
+      },
+      "id": "7d9cf8b5-e67c-4beb-b504-1da92930569d",
+      "name": "CM Wait",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2768,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9dda81d0-96e2-4c98-8777-aac277f31ea0",
+      "name": "C Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2448,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $('C Plan').first().json.needs_monitor }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d3390096-0eba-432b-8273-b3b94f27c6e6",
+      "name": "C Second access?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2112,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json:$('C Plan').first().json.input}];"
+      },
+      "id": "7e7eef73-ccbc-4b8e-8161-69fa13f12980",
+      "name": "C Get started",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $('C Plan').first().json.needs_monitor }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "50e31074-4dde-46dc-8c6a-44e72d6d8645",
+      "name": "C Release the second?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3104,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "monitor"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "={{ $('C Plan').first().json.owner }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "owner": "free",
+            "owner_workflow": "",
+            "finished_at": "={{ new Date().toISOString() }}"
+          },
+          "schema": [
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "owner_workflow",
+              "displayName": "owner_workflow",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "finished_at",
+              "displayName": "finished_at",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9e356ec4-c10b-4614-98cc-dc03994a1b44",
+      "name": "CM Release",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -2768,
+        720
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "commands"
+            },
+            {
+              "keyName": "owner",
+              "condition": "eq",
+              "keyValue": "={{ $('C Plan').first().json.owner }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "owner": "free",
+            "owner_workflow": "",
+            "finished_at": "={{ new Date().toISOString() }}"
+          },
+          "schema": [
+            {
+              "id": "owner",
+              "displayName": "owner",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "owner_workflow",
+              "displayName": "owner_workflow",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "finished_at",
+              "displayName": "finished_at",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "ccc0998d-0c79-4118-964a-68fac3c53c10",
+      "name": "C Release",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -2448,
+        720
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "if(!$input.all().some(i=>i.json.owner==='free'&&i.json.name===\"commands\"))throw Error('Owner release not confirmed');return [{json:{done:true}}];"
+      },
+      "id": "450376b7-6c33-4328-bfce-7bbffe18b383",
+      "name": "C Finish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2112,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ !$json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f3ca3191-84be-4a14-8e4e-4d464eb67c62",
+      "name": "C New command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1776,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "service"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "enabled": "={{ $(\"Parse command\").first().json.action === \"on\" }}"
+          },
+          "schema": [
+            {
+              "id": "enabled",
+              "displayName": "enabled",
+              "type": "boolean",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7a602f82-6b07-463d-b245-a922105b6918",
+      "name": "C Toggle service",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -3104,
+        944
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return $(\"Parse command\").all();"
+      },
+      "id": "c5ea7bb7-bc56-4276-bea0-6aff1c5e7bb7",
+      "name": "C Service goals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2768,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "yes",
+              "leftValue": "={{ $json.action === \"on\" }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "80b76823-73bf-4aff-81c4-6d354b125c9a",
+      "name": "C Enable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2448,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "service"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "interval_seconds": "={{ $(\"Parse command\").first().json.interval_seconds }}"
+          },
+          "schema": [
+            {
+              "id": "interval_seconds",
+              "displayName": "interval_seconds",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e2a8ff40-4c1e-4681-b069-608fbb530148",
+      "name": "C Change interval",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -3104,
+        1152
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "pf-gate-cond",
+              "leftValue": "={{ /^\\/perf(?:\\s|$)/i.test($(\"Receive message\").first().json.message?.text?.trim() ?? \"\") }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "pf-gate",
+      "name": "PF Metrics needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        -320
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:5678/metrics",
+        "options": {
+          "timeout": 3000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "pf-metrics-1-http",
+      "name": "PF Metrics 1 HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        -320
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{...$(\"PF Metrics 1 HTTP\").first().json, read_at: new Date().toISOString()}}];"
+      },
+      "id": "pf-metrics-1",
+      "name": "PF Metrics 1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        -320
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "pf-wait",
+      "name": "PF Pause",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        -320
+      ],
+      "webhookId": "pf-wait-webhook"
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:5678/metrics",
+        "options": {
+          "timeout": 3000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "pf-metrics-2-http",
+      "name": "PF Metrics 2 HTTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        -320
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{...$(\"PF Metrics 2 HTTP\").first().json, read_at: new Date().toISOString()}}];"
+      },
+      "id": "pf-metrics-2",
+      "name": "PF Metrics 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        -320
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "monitor"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "pf-monitor",
+      "name": "PF Monitor",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2320,
+        -320
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "http://127.0.0.1:5678/api/v1/executions?status=error&limit=250",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "pf-errors",
+      "name": "PF Errors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2480,
+        -320
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "hs-gate-cond",
+              "leftValue": "={{ /^\\/history(?:\\s|$)/i.test($(\"Receive message\").first().json.message?.text?.trim() ?? \"\") }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "hs-gate",
+      "name": "HS History needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        -560
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_METRIC_SAMPLES"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "sampled_at",
+              "condition": "gte",
+              "keyValue": "={{ new Date(Date.now() - 170 * 3600000).toISOString() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "id": "hs-samples",
+      "name": "HS Measurements",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1600,
+        -560
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "name": "R Silent baseline?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3104,
+        1300
+      ],
+      "executeOnce": true,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fresh",
+              "leftValue": "={{ $json.fresh === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "856be345-6763-4cef-89d0-e1c672db29f7"
+    },
+    {
+      "name": "R Clear queue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2784,
+        1200
+      ],
+      "executeOnce": true,
+      "parameters": {
+        "method": "DELETE",
+        "url": "http://127.0.0.1:5678/api/v1/data-tables/TABLE_NOTIFICATIONS/rows/delete",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "={{ JSON.stringify({type:\"and\",filters:[{columnName:\"status\",condition:\"neq\",value:\"sent\"}]}) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "b0a0a109-2738-44ac-b7a3-109356919e77"
+    },
+    {
+      "name": "R Confirm cleanup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2464,
+        1200
+      ],
+      "parameters": {
+        "jsCode": "const r=$input.first().json;if(r.statusCode!==200||!(r.body===true||r.body?.success===true))throw Error('The local API did not confirm the queue cleanup');return [{json:{}}];"
+      },
+      "id": "c5bd2dbb-98da-42ba-8018-ce875159ae99"
+    },
+    {
+      "name": "R Check queue",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -2144,
+        1200
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_NOTIFICATIONS"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "neq",
+              "keyValue": "sent"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1
+      },
+      "id": "2dae8349-a0d9-4c7d-aa4e-bdd9c5f66a9e"
+    },
+    {
+      "name": "R Searches to reset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1824,
+        1200
+      ],
+      "parameters": {
+        "jsCode": "if($input.all().some(i=>i.json.id))throw Error('Queue not cleared');const ids=$(\"Read searches\").all().map(i=>i.json.search_id).filter(Boolean);if(!ids.length)throw Error('No searches for silent baseline');return ids.map(search_id=>({json:{search_id}}));"
+      },
+      "id": "268f935c-69c2-48b7-baa3-1a78c8a92bb8"
+    },
+    {
+      "name": "R Reset baseline",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -1504,
+        1200
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_SEARCHES"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "search_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.search_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "initialized": "={{ false }}",
+            "baseline_completed_at": "={{ null }}"
+          },
+          "schema": [
+            {
+              "id": "initialized",
+              "displayName": "initialized",
+              "type": "boolean",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            },
+            {
+              "id": "baseline_completed_at",
+              "displayName": "baseline_completed_at",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true
+            }
+          ],
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "2f9d1d16-ce84-43c7-b598-4e08cdb353a2"
+    },
+    {
+      "name": "R Confirm reset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1184,
+        1200
+      ],
+      "parameters": {
+        "jsCode": "const want=$(\"R Searches to reset\").all().map(i=>i.json.search_id).sort();const got=$input.all().map(i=>i.json).filter(r=>r.search_id);if(JSON.stringify(got.map(r=>r.search_id).sort())!==JSON.stringify(want)||got.some(r=>r.initialized!==false||r.baseline_completed_at))throw Error('Silent baseline not recorded for all searches');return [{json:{}}];"
+      },
+      "id": "6088eb9f-4ecb-44fe-b5df-53881264a289"
+    }
+  ],
+  "connections": {
+    "Read searches": {
+      "main": [
+        [
+          {
+            "node": "IS Queue needed for status?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read queue": {
+      "main": [
+        [
+          {
+            "node": "PF Metrics needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse command": {
+      "main": [
+        [
+          {
+            "node": "Choose action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose action": {
+      "main": [
+        [
+          {
+            "node": "Add search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IS Check deletion owner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply in Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "R Silent baseline?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Toggle service",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Change interval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add search": {
+      "main": [
+        [
+          {
+            "node": "Reply in Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete search": {
+      "main": [
+        [
+          {
+            "node": "Reply in Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram — input": {
+      "main": [
+        [
+          {
+            "node": "Receive message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply in Telegram": {
+      "main": [
+        [
+          {
+            "node": "Prepare command receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read service state": {
+      "main": [
+        [
+          {
+            "node": "Parse command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enable production workflows": {
+      "main": [
+        [
+          {
+            "node": "Reply in Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disable production workflows": {
+      "main": [
+        [
+          {
+            "node": "Reply in Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search history deleted": {
+      "main": [
+        [
+          {
+            "node": "Delete search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Queue needed for status?": {
+      "main": [
+        [
+          {
+            "node": "Read queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read service state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Check deletion owner": {
+      "main": [
+        [
+          {
+            "node": "IS Delete search notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Delete search notifications": {
+      "main": [
+        [
+          {
+            "node": "IS Confirm deletion API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Confirm deletion API": {
+      "main": [
+        [
+          {
+            "node": "IS Check for no notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Check for no notifications": {
+      "main": [
+        [
+          {
+            "node": "IS Confirm no notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Confirm no notifications": {
+      "main": [
+        [
+          {
+            "node": "IS Delete API history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Delete API history": {
+      "main": [
+        [
+          {
+            "node": "IS Confirm API history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Confirm API history": {
+      "main": [
+        [
+          {
+            "node": "IS Verify no history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IS Verify no history": {
+      "main": [
+        [
+          {
+            "node": "Search history deleted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare command receipt": {
+      "main": [
+        [
+          {
+            "node": "Remember command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receive message": {
+      "main": [
+        [
+          {
+            "node": "C Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Command not processed yet": {
+      "main": [
+        [
+          {
+            "node": "C New command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Settings": {
+      "main": [
+        [
+          {
+            "node": "C Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Input": {
+      "main": [
+        [
+          {
+            "node": "C Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Read": {
+      "main": [
+        [
+          {
+            "node": "C State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Free?": {
+      "main": [
+        [
+          {
+            "node": "C Acquire",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C State": {
+      "main": [
+        [
+          {
+            "node": "C Free?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Owner": {
+      "main": [
+        [
+          {
+            "node": "C Evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Missing?": {
+      "main": [
+        [
+          {
+            "node": "C Active",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Can recover?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Evaluate": {
+      "main": [
+        [
+          {
+            "node": "C Missing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Active": {
+      "main": [
+        [
+          {
+            "node": "C Confirm absence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Confirm absence": {
+      "main": [
+        [
+          {
+            "node": "C Can recover?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Can recover?": {
+      "main": [
+        [
+          {
+            "node": "C Restore",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Restore": {
+      "main": [
+        [
+          {
+            "node": "C Acquire",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Acquire": {
+      "main": [
+        [
+          {
+            "node": "C My owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Received?": {
+      "main": [
+        [
+          {
+            "node": "C Second access?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C My owner": {
+      "main": [
+        [
+          {
+            "node": "C Received?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Wait": {
+      "main": [
+        [
+          {
+            "node": "C Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Read": {
+      "main": [
+        [
+          {
+            "node": "CM State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Free?": {
+      "main": [
+        [
+          {
+            "node": "CM Acquire",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CM Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM State": {
+      "main": [
+        [
+          {
+            "node": "CM Free?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Owner": {
+      "main": [
+        [
+          {
+            "node": "CM Evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Missing?": {
+      "main": [
+        [
+          {
+            "node": "CM Active",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CM Can recover?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Evaluate": {
+      "main": [
+        [
+          {
+            "node": "CM Missing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Active": {
+      "main": [
+        [
+          {
+            "node": "CM Confirm absence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Confirm absence": {
+      "main": [
+        [
+          {
+            "node": "CM Can recover?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Can recover?": {
+      "main": [
+        [
+          {
+            "node": "CM Restore",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CM Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Restore": {
+      "main": [
+        [
+          {
+            "node": "CM Acquire",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Acquire": {
+      "main": [
+        [
+          {
+            "node": "CM My owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Received?": {
+      "main": [
+        [
+          {
+            "node": "C Get started",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CM Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM My owner": {
+      "main": [
+        [
+          {
+            "node": "CM Received?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Wait": {
+      "main": [
+        [
+          {
+            "node": "CM Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Allowed?": {
+      "main": [
+        [
+          {
+            "node": "C Read",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Plan": {
+      "main": [
+        [
+          {
+            "node": "C Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Second access?": {
+      "main": [
+        [
+          {
+            "node": "CM Read",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Get started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Release the second?": {
+      "main": [
+        [
+          {
+            "node": "CM Release",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Release",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CM Release": {
+      "main": [
+        [
+          {
+            "node": "C Release",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Release": {
+      "main": [
+        [
+          {
+            "node": "C Finish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Get started": {
+      "main": [
+        [
+          {
+            "node": "Command not processed yet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C New command?": {
+      "main": [
+        [
+          {
+            "node": "Read searches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Release the second?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remember command": {
+      "main": [
+        [
+          {
+            "node": "C Release the second?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Toggle service": {
+      "main": [
+        [
+          {
+            "node": "C Service goals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Enable?": {
+      "main": [
+        [
+          {
+            "node": "Enable production workflows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Disable production workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Service goals": {
+      "main": [
+        [
+          {
+            "node": "C Enable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C Change interval": {
+      "main": [
+        [
+          {
+            "node": "Reply in Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF Metrics needed?": {
+      "main": [
+        [
+          {
+            "node": "PF Metrics 1 HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HS History needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF Metrics 1 HTTP": {
+      "main": [
+        [
+          {
+            "node": "PF Metrics 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF Metrics 1": {
+      "main": [
+        [
+          {
+            "node": "PF Pause",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF Pause": {
+      "main": [
+        [
+          {
+            "node": "PF Metrics 2 HTTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF Metrics 2 HTTP": {
+      "main": [
+        [
+          {
+            "node": "PF Metrics 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF Metrics 2": {
+      "main": [
+        [
+          {
+            "node": "PF Monitor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF Monitor": {
+      "main": [
+        [
+          {
+            "node": "PF Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PF Errors": {
+      "main": [
+        [
+          {
+            "node": "Read service state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HS History needed?": {
+      "main": [
+        [
+          {
+            "node": "HS Measurements",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read service state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HS Measurements": {
+      "main": [
+        [
+          {
+            "node": "Read service state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R Silent baseline?": {
+      "main": [
+        [
+          {
+            "node": "R Clear queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "C Toggle service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R Clear queue": {
+      "main": [
+        [
+          {
+            "node": "R Confirm cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R Confirm cleanup": {
+      "main": [
+        [
+          {
+            "node": "R Check queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R Check queue": {
+      "main": [
+        [
+          {
+            "node": "R Searches to reset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R Searches to reset": {
+      "main": [
+        [
+          {
+            "node": "R Reset baseline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R Reset baseline": {
+      "main": [
+        [
+          {
+            "node": "R Confirm reset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R Confirm reset": {
+      "main": [
+        [
+          {
+            "node": "C Toggle service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "timezone": "Europe/Warsaw",
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [
+    {
+      "id": "4265773f-f0c4-41ae-8cfa-f021b70fb7f2",
+      "name": "Owners and access",
+      "nodeIds": [
+        "d7f311ee-6af2-470b-909c-1d278a615e1e",
+        "4a412c03-85ad-42fb-a647-23a54449b3a5",
+        "e824a835-ebd8-4b40-962c-d30eac2aafff",
+        "c5ce73e7-4994-458a-aa85-adeab52ea9e7",
+        "75294243-6417-4409-a434-b8a65fcf76d0",
+        "4c9b9df8-8b12-4719-8a73-6686524d0133",
+        "f0c8cc2d-bd12-4109-9b4d-81c265da5b55",
+        "23534331-a850-45c7-8d8c-d5c408d4429e",
+        "bbcf6f80-9bfa-4e75-9f82-b2194554fd34",
+        "4efc1d23-ec6c-4233-8884-35df536a6f4e",
+        "9092fd78-35c9-4660-b438-a4a7242a1ba2",
+        "217b4f27-8874-4108-b7b5-9e4aa6d7ff07",
+        "77d75a65-fa83-417e-a4ad-366afe856602",
+        "8f2b4217-6bc5-4644-908f-85f4b2f844c1",
+        "33627fae-48eb-49bc-a3fd-e26f2be4c0d1",
+        "913e3a79-d11a-4179-93e0-93e1bff0d660",
+        "20b78d9d-6a58-4fd7-ba86-f142014b57b1",
+        "7b5d5bc6-2da6-4bc2-b4fa-fb8d0b9ab9af",
+        "fdfd3f8d-dad5-448d-974a-e65b9f3ddf36",
+        "3916ef03-0508-49ff-865e-cc5f759baada",
+        "660a889d-afa4-4c69-8541-9b638933e922",
+        "2f423f80-aac6-47d3-8eaa-9255b37ed3c9",
+        "ccfae12a-a53c-4981-8239-ab5516dbb3df",
+        "9abc3509-07cd-4789-83c8-db28248843c2",
+        "955f8626-64e8-4a18-a43a-cb3935d5eda2",
+        "99497611-23b0-4ab8-9aa3-89ec9fe176d8",
+        "c2fc0a55-b377-4924-a0a5-713190115068",
+        "aaa8cea3-0668-46c9-8882-35c596d7e77a",
+        "9156f0a8-b7eb-4b5d-84b0-932032be8d92",
+        "ce9dc5c1-59d1-443e-b35a-0903249868a9",
+        "e2b7a6ef-3b5b-4ef6-bdc9-30dd14ea409c",
+        "b82f6fc3-1720-4149-9d90-2ad3934d14aa",
+        "7d9cf8b5-e67c-4beb-b504-1da92930569d",
+        "9dda81d0-96e2-4c98-8777-aac277f31ea0",
+        "d3390096-0eba-432b-8273-b3b94f27c6e6",
+        "7e7eef73-ccbc-4b8e-8161-69fa13f12980"
+      ],
+      "description": "One owner per role; recovery only after checking the n8n execution."
+    },
+    {
+      "id": "f041d566-0423-4711-b141-d8f6e93bd9e6",
+      "name": "Command processing",
+      "nodeIds": [
+        "779a7cfd-5bb8-4d34-890e-d3fa987dace2",
+        "06eca997-b8de-42c2-813c-64457bc26e45",
+        "789216b9-6d31-45a1-ac18-5156112b0e57",
+        "573613f9-3899-473b-aca4-24e62e6232bd",
+        "7f12844e-e5a8-443a-a6c5-8b7cd1639aa9",
+        "c548b3c0-06e6-4719-aee1-7f2ae30b4e29",
+        "a6ed1f6f-ff07-4456-9f14-17be336c362a",
+        "1b6cfebe-4590-4154-8230-68ebd9adc113",
+        "f9be6e56-8778-46d9-b02c-d6079eba8dcb",
+        "2b1e1757-b517-4b7b-a5dc-53bf8608a2af",
+        "e66a5067-8646-4b42-8b8a-9c5cc0494bac",
+        "d32f6e84-1057-4b32-93f6-20dd7605d290",
+        "6a22644b-814a-4451-8a08-b5b38df05b71",
+        "384b6cfb-14cd-43bd-9086-b797ab437843",
+        "1ca7ee6d-12fe-4580-8875-b22118890f50",
+        "68bc88e9-3e52-489f-b100-f450a3e7f5d1",
+        "37a421d1-c6b9-4f3c-b03b-efd5e2f1fc60",
+        "is-queue-status-gate",
+        "is-d90e2708ad23c65fc05ea67e",
+        "is-ff4fd65b68ad892f4d628811",
+        "is-98c405e9dd2a3bc66c13ec98",
+        "is-b376d64bc643c793c65bc60f",
+        "is-dbce30b9a6fcf501ea8be237",
+        "is-359e27b707ecd1c97f7bde1c",
+        "is-2444838420ece6b978b43860",
+        "is-e273daec71685169f063aee1",
+        "command-receipt-from-telegram",
+        "50e31074-4dde-46dc-8c6a-44e72d6d8645",
+        "9e356ec4-c10b-4614-98cc-dc03994a1b44",
+        "ccc0998d-0c79-4118-964a-68fac3c53c10",
+        "450376b7-6c33-4328-bfce-7bbffe18b383",
+        "f3ca3191-84be-4a14-8e4e-4d464eb67c62",
+        "7a602f82-6b07-463d-b245-a922105b6918",
+        "c5ea7bb7-bc56-4276-bea0-6aff1c5e7bb7",
+        "80b76823-73bf-4aff-81c4-6d354b125c9a",
+        "e2a8ff40-4c1e-4681-b069-608fbb530148",
+        "pf-gate",
+        "pf-metrics-1-http",
+        "pf-metrics-1",
+        "pf-wait",
+        "pf-metrics-2-http",
+        "pf-metrics-2",
+        "pf-monitor",
+        "pf-errors",
+        "hs-gate",
+        "hs-samples",
+        "856be345-6763-4cef-89d0-e1c672db29f7",
+        "b0a0a109-2738-44ac-b7a3-109356919e77",
+        "c5bd2dbb-98da-42ba-8018-ce875159ae99",
+        "2dae8349-a0d9-4c7d-aa4e-bdd9c5f66a9e",
+        "268f935c-69c2-48b7-baa3-1a78c8a92bb8",
+        "2f9d1d16-ce84-43c7-b598-4e08cdb353a2",
+        "6088eb9f-4ecb-44fe-b5df-53881264a289"
+      ],
+      "description": "Commands one at a time; /del waits for the monitor; one reply and receipt."
+    }
+  ]
+}

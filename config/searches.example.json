@@ -1,0 +1,28 @@
+[
+  {
+    "search_id": "s001",
+    "name": "Shoes 44",
+    "url": "https://www.marketplace.example/catalog?catalog[]=1231&status_ids[]=6&page=1&price_to=300&currency=PLN&size_ids[]=788&order=newest_first",
+    "interval_seconds": 60,
+    "enabled": true,
+    "initialized": false,
+    "applied_url": "",
+    "next_check_at": null,
+    "last_success_at": null,
+    "last_error": "",
+    "baseline_completed_at": null
+  },
+  {
+    "search_id": "s002",
+    "name": "New search",
+    "url": "https://www.marketplace.example/catalog?catalog[]=79&size_ids[]=209&page=1&status_ids[]=6&status_ids[]=1&order=newest_first",
+    "interval_seconds": 60,
+    "enabled": true,
+    "initialized": false,
+    "applied_url": "",
+    "next_check_at": null,
+    "last_success_at": null,
+    "last_error": "",
+    "baseline_completed_at": null
+  }
+]

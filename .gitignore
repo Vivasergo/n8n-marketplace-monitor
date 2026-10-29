@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.n8n/
+*.sqlite
+*.db
+node_modules/
+*.log
+.vscode/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,767 @@
+{
+  "name": "Marketplace — Watchdog",
+  "active": false,
+  "nodes": [
+    {
+      "id": "wd-timer",
+      "name": "Watchdog timer",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "wd-settings",
+      "name": "Watchdog settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"admin_chat_id\": \"0\",\n  \"label\": \"Monitor\",\n  \"monitor_id\": \"WORKFLOW_MONITOR\",\n  \"sender_id\": \"WORKFLOW_SENDER\"\n}",
+        "options": {}
+      },
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "id": "wd-state",
+      "name": "Read state",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "isNotEmpty"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "id": "wd-searches",
+      "name": "Read searches",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_SEARCHES"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "search_id",
+              "condition": "isNotEmpty"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "id": "wd-queue",
+      "name": "Read queue",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_NOTIFICATIONS"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "neq",
+              "keyValue": "sent"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "id": "wd-workflows",
+      "name": "Production workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "url": "http://127.0.0.1:5678/api/v1/workflows?limit=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "position": [
+        1120,
+        0
+      ]
+    },
+    {
+      "id": "wd-errors",
+      "name": "Execution errors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "url": "http://127.0.0.1:5678/api/v1/executions?status=error&limit=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "position": [
+        1344,
+        0
+      ]
+    },
+    {
+      "id": "wd-sent",
+      "name": "Read sent",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_NOTIFICATIONS"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "sent"
+            },
+            {
+              "keyName": "sent_at",
+              "condition": "gte",
+              "keyValue": "={{ new Date(Date.now() - 30 * 60000).toISOString() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "position": [
+        1568,
+        0
+      ]
+    },
+    {
+      "id": "wd-metrics",
+      "name": "n8n metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "url": "http://127.0.0.1:5678/metrics",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "position": [
+        1792,
+        0
+      ]
+    },
+    {
+      "id": "wd-evaluate",
+      "name": "Evaluate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Problems are states (alert once, remind hourly, report recovery);\n// failed cards and execution errors are events (reported once).\nconst cfg = $(\"Watchdog settings\").first().json;\nconst now = Date.now();\nconst min = ms => Math.round(ms / 60000);\nconst warsaw = v => new Intl.DateTimeFormat(\"pl-PL\", { timeZone: \"Europe/Warsaw\", dateStyle: \"short\", timeStyle: \"medium\" }).format(new Date(v));\nconst rows = $(\"Read state\").all().map(i => i.json).filter(r => r.name);\nconst byName = Object.fromEntries(rows.map(r => [r.name, r]));\nconst service = byName.service || {}, monitor = byName.monitor || {};\nconst interval = Number(service.interval_seconds) || 20;\nlet prev = {};\ntry { prev = JSON.parse(byName.watchdog?.alerts_json || \"{}\") || {}; } catch (e) { prev = {}; }\nconst active = prev.active || {};\nconst searches = $(\"Read searches\").all().map(i => i.json).filter(s => s.search_id);\nconst queue = $(\"Read queue\").all().map(i => i.json).filter(n => n.item_id);\nconst wfResp = $(\"Production workflows\").first().json;\nconst exResp = $(\"Execution errors\").first().json;\n\nconst problems = {};\nconst events = [];\nconst workflows = wfResp.statusCode === 200 && Array.isArray(wfResp.body?.data) ? wfResp.body.data : null;\nif (!workflows) problems.api = \"No access to the n8n API (HTTP \" + (wfResp.statusCode ?? \"—\") + \"): watchdog cannot see workflow state.\";\nconst isActive = id => workflows?.find(w => w.id === id)?.active === true;\nconst monitorOn = isActive(cfg.monitor_id), senderOn = isActive(cfg.sender_id);\n\n// Monitoring is on but has not finished a cycle for 5 intervals (at least 5 minutes).\nif (monitorOn) {\n  const last = Date.parse(monitor.last_completed_at || monitor.finished_at || \"\");\n  const limit = Math.max(5 * interval, 300) * 1000;\n  if (!Number.isFinite(last) || now - last > limit)\n    problems.stalled = \"Monitoring is on but has not completed a cycle \" + (Number.isFinite(last) ? min(now - last) + \" min (last \" + warsaw(last) + \")\" : \"never\") + \".\";\n}\n\n// Per-search problems: 429 for more than 3 intervals, other errors for more than 30 minutes, HTML fallback.\nif (monitorOn) {\n  const limited = [], html = [];\n  for (const s of searches.filter(s => s.enabled)) {\n    const error = String(s.last_error || \"\");\n    if (!error) continue;\n    const label = s.name + \" (\" + s.search_id + \")\";\n    if (error.startsWith(\"JSON unavailable, HTML used\")) { html.push(label); continue; }\n    const since = Date.parse(s.last_success_at || s.createdAt || \"\");\n    const age = Number.isFinite(since) ? now - since : Infinity;\n    if (error.startsWith(\"Marketplace: HTTP 429\")) { if (age > 3 * interval * 1000) limited.push(label); continue; }\n    if (age > 30 * 60000)\n      problems[\"search:\" + s.search_id] = \"Search \" + label + \" without a successful check \" + (Number.isFinite(age) ? min(age) + \" min\" : \"since it was added\") + \": \" + error.slice(0, 300);\n  }\n  if (limited.length) problems.rate = \"Marketplace has been returning 429 for longer than \" + 3 * interval + \" s: \" + limited.join(\", \") + \".\";\n  if (html.length) problems.html = \"Marketplace changed the page, using fallback HTML parsing: \" + html.join(\", \") + \".\";\n}\n\n// The oldest pending card waits for more than 10 minutes while sending is on.\nconst pending = queue.filter(n => n.status === \"pending\");\nif (senderOn && pending.length) {\n  const oldest = Math.min(...pending.map(n => Date.parse(n.createdAt)));\n  if (now - oldest > 10 * 60000)\n    problems.queue = \"Queue is stuck: waiting \" + pending.length + \", oldest \" + min(now - oldest) + \" min.\";\n}\n\n// Cards the sender gave up on stay as status=failed until the nightly cleanup.\nconst failed = queue.filter(n => n.status === \"failed\");\nconst seenFailed = new Set(prev.failed_ids || []);\nfor (const n of failed.filter(n => !seenFailed.has(n.id))) {\n  let p = {};\n  try { p = JSON.parse(n.payload_json || \"{}\"); } catch (e) {}\n  events.push(\"Card not delivered after 3 attempts: \" + (p.title || n.item_id) + \" (search \" + (p.search_name || n.search_id) + \"). \" + String(n.last_error || \"\").slice(0, 300));\n}\n\n// Execution errors since the previous check, grouped by workflow.\nlet errorsSince = Number(prev.errors_since) || now;\nlet freshErrors = [];\nconst errorCounts = {};\nif (exResp.statusCode === 200 && Array.isArray(exResp.body?.data)) {\n  freshErrors = exResp.body.data.filter(e => Date.parse(e.startedAt) > errorsSince);\n  if (freshErrors.length) {\n    for (const e of freshErrors) {\n      const name = workflows?.find(w => w.id === e.workflowId)?.name || e.workflowId;\n      errorCounts[name] = (errorCounts[name] || 0) + 1;\n    }\n    events.push(\"Failed executions since \" + warsaw(errorsSince) + \": \" + Object.entries(errorCounts).map(([k, v]) => k + \" — \" + v).join(\", \") + \". Details in Executions of the n8n editor.\");\n    errorsSince = Math.max(...freshErrors.map(e => Date.parse(e.startedAt)));\n  }\n} else problems.api = problems.api || \"No access to the n8n API (HTTP \" + (exResp.statusCode ?? \"—\") + \"): watchdog cannot see execution errors.\";\n\nconst messages = [];\nfor (const [key, text] of Object.entries(problems)) {\n  const remindEvery = (key === \"html\" ? 24 * 60 : 60) * 60000;\n  if (!active[key]) { messages.push(\"⚠️ \" + text); active[key] = { text, since: now, sent: now }; }\n  else {\n    if (now - active[key].sent > remindEvery) { messages.push(\"⚠️ Still (since \" + warsaw(active[key].since) + \"): \" + text); active[key].sent = now; }\n    active[key].text = text;\n  }\n}\nfor (const key of Object.keys(active)) if (!problems[key]) {\n  messages.push(\"✅ Recovered: \" + active[key].text);\n  delete active[key];\n}\nmessages.push(...events.map(e => \"❗ \" + e));\n\nconst text = messages.length ? (\"[\" + cfg.label + \"] Watchdog\\n\\n\" + messages.join(\"\\n\\n\")).slice(0, 3800) : \"\";\n\n// One history sample per run for /history. CPU and execution rate are averages since the previous sample.\nconst metricsText = String($(\"n8n metrics\").first().json.data ?? \"\");\nconst metric = name => { const m = metricsText.match(new RegExp(\"^\" + name + \"(?:\\\\{[^}]*\\\\})? (\\\\S+)$\", \"m\")); return m ? Number(m[1]) : NaN; };\nconst runs = [...metricsText.matchAll(/^n8n_workflow_execution_duration_seconds_count(?:\\{[^}]*\\})? (\\S+)$/gm)].reduce((s, m) => s + Number(m[1]), 0);\nconst cpuTotal = metric(\"n8n_process_cpu_seconds_total\"), started = metric(\"n8n_process_start_time_seconds\");\nconst last = prev.sample;\nconst restarted = !!last && Number.isFinite(started) && started !== last.start;\nconst span = last ? (now - last.at) / 1000 : 0;\nconst usable = last && !restarted && span > 0 && Number.isFinite(cpuTotal);\nconst round = (v, d = 1) => Number.isFinite(v) ? Math.round(v * 10 ** d) / 10 ** d : null;\nconst since = last ? last.at : now - 5 * 60000;\nconst sentNew = $(\"Read sent\").all().map(i => i.json)\n  .filter(n => n.item_id && Date.parse(n.sent_at) > since && Date.parse(n.sent_at) <= now);\nconst delays = sentNew.map(n => (Date.parse(n.sent_at) - Date.parse(n.createdAt)) / 1000).filter(d => Number.isFinite(d) && d >= 0);\nconst cycleMs = Date.parse(monitor.last_completed_at) - Date.parse(monitor.last_started_at);\nconst stale = searches.filter(s => s.enabled && s.initialized && s.last_success_at).map(s => (now - Date.parse(s.last_success_at)) / 1000).filter(Number.isFinite);\nconst rateNow = searches.filter(s => s.enabled && String(s.last_error || \"\").startsWith(\"Marketplace: HTTP 429\")).map(s => s.name);\nconst sample = {\n  sampled_at: new Date(now).toISOString(),\n  cpu_pct: usable ? round((cpuTotal - last.cpu) / span * 100) : null,\n  rss_mb: round(metric(\"n8n_process_resident_memory_bytes\") / 1048576, 0),\n  lag_ms: round(metric(\"n8n_nodejs_eventloop_lag_p99_seconds\") * 1000),\n  exec_rate: usable ? round((runs - last.runs) / span, 2) : null,\n  cycle_s: Number.isFinite(cycleMs) && cycleMs >= 0 ? round(cycleMs / 1000) : null,\n  queue: pending.length,\n  stale_s: stale.length ? round(Math.max(...stale), 0) : null,\n  cards: sentNew.length,\n  delay_avg_s: delays.length ? round(delays.reduce((a, b) => a + b, 0) / delays.length) : null,\n  delay_max_s: delays.length ? round(Math.max(...delays)) : null,\n  retries: sentNew.filter(n => Number(n.attempts) > 0).length,\n  errors: freshErrors.length,\n  notes: JSON.stringify({\n    rate: rateNow, errors: errorCounts, restart: restarted,\n    failed: failed.filter(n => !seenFailed.has(n.id)).map(n => { try { return JSON.parse(n.payload_json || \"{}\").title || n.item_id; } catch (e) { return n.item_id; } }),\n    alerts: messages.filter(m => !m.startsWith(\"❗\") && !m.startsWith(\"⚠️ Still\")),\n  }),\n};\nconst state = JSON.stringify({ active, failed_ids: failed.map(n => n.id), errors_since: errorsSince,\n  sample: Number.isFinite(cpuTotal) ? { at: now, cpu: cpuTotal, start: started, runs } : null });\nreturn [{ json: { text, state, sample, chat_id: String(cfg.admin_chat_id) } }];"
+      },
+      "position": [
+        2016,
+        0
+      ]
+    },
+    {
+      "id": "wd-has-message",
+      "name": "Has message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "wd-has-message-cond",
+              "leftValue": "={{ $json.text !== \"\" }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "position": [
+        2240,
+        0
+      ]
+    },
+    {
+      "id": "wd-send",
+      "name": "Message the administrator",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "webhookId": "wd-send-webhook",
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      },
+      "position": [
+        2464,
+        -160
+      ]
+    },
+    {
+      "id": "wd-save",
+      "name": "Save watchdog state",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_MONITOR_STATE"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "watchdog"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "watchdog",
+            "alerts_json": "={{ $(\"Evaluate\").first().json.state }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "alerts_json",
+              "displayName": "alerts_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        2688,
+        0
+      ]
+    },
+    {
+      "id": "wd-sample",
+      "name": "Write measurement",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_METRIC_SAMPLES"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sampled_at": "={{ $(\"Evaluate\").first().json.sample.sampled_at }}",
+            "cpu_pct": "={{ $(\"Evaluate\").first().json.sample.cpu_pct }}",
+            "rss_mb": "={{ $(\"Evaluate\").first().json.sample.rss_mb }}",
+            "lag_ms": "={{ $(\"Evaluate\").first().json.sample.lag_ms }}",
+            "exec_rate": "={{ $(\"Evaluate\").first().json.sample.exec_rate }}",
+            "cycle_s": "={{ $(\"Evaluate\").first().json.sample.cycle_s }}",
+            "queue": "={{ $(\"Evaluate\").first().json.sample.queue }}",
+            "stale_s": "={{ $(\"Evaluate\").first().json.sample.stale_s }}",
+            "cards": "={{ $(\"Evaluate\").first().json.sample.cards }}",
+            "delay_avg_s": "={{ $(\"Evaluate\").first().json.sample.delay_avg_s }}",
+            "delay_max_s": "={{ $(\"Evaluate\").first().json.sample.delay_max_s }}",
+            "retries": "={{ $(\"Evaluate\").first().json.sample.retries }}",
+            "errors": "={{ $(\"Evaluate\").first().json.sample.errors }}",
+            "notes": "={{ $(\"Evaluate\").first().json.sample.notes }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "sampled_at",
+              "displayName": "sampled_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "cpu_pct",
+              "displayName": "cpu_pct",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "rss_mb",
+              "displayName": "rss_mb",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lag_ms",
+              "displayName": "lag_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "exec_rate",
+              "displayName": "exec_rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "cycle_s",
+              "displayName": "cycle_s",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "queue",
+              "displayName": "queue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "stale_s",
+              "displayName": "stale_s",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "cards",
+              "displayName": "cards",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "delay_avg_s",
+              "displayName": "delay_avg_s",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "delay_max_s",
+              "displayName": "delay_max_s",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "retries",
+              "displayName": "retries",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "errors",
+              "displayName": "errors",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        2912,
+        0
+      ]
+    },
+    {
+      "id": "wd-prune",
+      "name": "Delete old measurements",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "TABLE_METRIC_SAMPLES"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "sampled_at",
+              "condition": "lt",
+              "keyValue": "={{ new Date(Date.now() - 7 * 86400000).toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "position": [
+        3136,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Watchdog timer": {
+      "main": [
+        [
+          {
+            "node": "Watchdog settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watchdog settings": {
+      "main": [
+        [
+          {
+            "node": "Read state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read state": {
+      "main": [
+        [
+          {
+            "node": "Read searches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read searches": {
+      "main": [
+        [
+          {
+            "node": "Read queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read queue": {
+      "main": [
+        [
+          {
+            "node": "Production workflows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Production workflows": {
+      "main": [
+        [
+          {
+            "node": "Execution errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execution errors": {
+      "main": [
+        [
+          {
+            "node": "Read sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read sent": {
+      "main": [
+        [
+          {
+            "node": "n8n metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n metrics": {
+      "main": [
+        [
+          {
+            "node": "Evaluate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate": {
+      "main": [
+        [
+          {
+            "node": "Has message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has message?": {
+      "main": [
+        [
+          {
+            "node": "Message the administrator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save watchdog state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message the administrator": {
+      "main": [
+        [
+          {
+            "node": "Save watchdog state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save watchdog state": {
+      "main": [
+        [
+          {
+            "node": "Write measurement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write measurement": {
+      "main": [
+        [
+          {
+            "node": "Delete old measurements",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "timezone": "Europe/Warsaw",
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
